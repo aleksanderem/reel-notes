@@ -4,8 +4,11 @@ Paste a link to a reel → Claude downloads the video, **watches the frames** (o
 prompts, code), **listens to the speech**, extracts what matters, and saves a Markdown note to your
 notes folder (optionally a git repo, so it syncs across machines and agents).
 
-Works with Instagram reels and posts (including carousels), TikTok, YouTube Shorts and anything
-else `yt-dlp` can download.
+Works with Instagram reels, posts and carousels, TikTok, YouTube Shorts and anything else `yt-dlp`
+can download.
+
+**Carousels** (Instagram): every slide is saved in order — photos at full size, video slides cut into
+frames and transcribed like a reel — and the contact sheets show the whole carousel at a glance.
 
 ## Why frames, not just audio
 

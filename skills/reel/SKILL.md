@@ -1,6 +1,6 @@
 ---
 name: reel
-description: Analyzes a reel / short video (Instagram reel or post, TikTok, YouTube Shorts, Facebook) — downloads it, watches the frames (on-screen text, slides, prompts, code, tools shown) and listens to the speech, extracts what matters, and saves a note to the user's notes repo. Use when the user pastes a link to a reel / TikTok / Short or asks "analyze this reel", "what's in this video", "save this reel", "pull the prompts from this reel". Also for questions about previously saved reels ("what did I save about X", "find the reel about Y").
+description: Analyzes a reel / short video (Instagram reel, post or carousel, TikTok, YouTube Shorts, Facebook) — downloads it, watches the frames (on-screen text, slides, prompts, code, tools shown) and listens to the speech, extracts what matters, and saves a note to the user's notes repo. Use when the user pastes a link to a reel / TikTok / Short or asks "analyze this reel", "what's in this video", "save this reel", "pull the prompts from this reel". Also for questions about previously saved reels ("what did I save about X", "find the reel about Y").
 argument-hint: <reel URL> [what to focus on]
 ---
 
@@ -34,7 +34,12 @@ link and the note file name.
    - `transcript.txt` / `transcript.srt` — speech (language auto-detected; `.srt` has timestamps)
    - `sheet_NN.jpg` — contact sheets, 24 frames each (6 columns × 4 rows, read row by row);
      sheet 01 = frames 1–24, sheet 02 = 25–48, etc.
-   - `frames/scene_NNN.jpg` — single frames (540 px); `frames.tsv` — frame → second in the video
+   - `frames/scene_NNN.jpg` — single frames (540 px); `frames.tsv` — frame, slide number, second
+     in the video (`-` for a photo slide)
+   - **carousel** (Instagram post with several slides): `slides.tsv` (file, image|video, alt text) and
+     `slides/NN.jpg` / `slides/NN.mp4` — every slide in order, photos at full size. Video slides are
+     cut into frames like a reel, and their speech is in `transcript.txt` under `### Slide N` headings
+     (timestamps in `slides/NN.srt`). The contact sheets show all slides in order.
    On "missing program" / "Apify returned no post", tell the user the cause and the fix from the message.
 
 3. **Read the text:** `meta.json` (caption + comments — creators often say "comment X and I'll send…",
@@ -45,8 +50,12 @@ link and the note file name.
    - Open (Read) every `sheet_*.jpg` — see the whole reel and find where the content is.
    - Open frames with text or important visuals individually from `frames/`.
    - Small or dense text (a prompt on a slide, code, a table): take the time from `frames.tsv` and
-     cut sharp frames: `bash $S/zoom.sh <dir> <from_s> <to_s> [fps]`, then open the files in `hi/`.
+     cut sharp frames: `bash $S/zoom.sh <dir> <from_s> <to_s> [fps] [slide]` (`slide` = slide number
+     for a video slide of a carousel), then open the files in `hi/`. Photo slides: open
+     `slides/NN.jpg` directly — they are full size.
      Scrolling text or text covered by captions — compare consecutive frames and piece it together.
+   - Carousel: go through every slide in order — the content usually builds slide by slide
+     (a list, steps, a prompt split across slides); keep that order in the note.
    - Note what is visible: captions, tool and site names, what the creator shows/does, numbers, charts.
    - Check names heard in speech against the screen (speech recognition mangles names,
      e.g. "Kurtz Guzzant" = Kurzgesagt).
@@ -73,7 +82,8 @@ link and the note file name.
    author: "<@author>"
    published: <YYYY-MM-DD>
    added: <today YYYY-MM-DD>
-   duration_s: <seconds>
+   duration_s: <seconds; for a carousel: total of its video slides, 0 if photos only>
+   slides: <number of slides — carousels only, drop the line otherwise>
    tags: [<3–6 lowercase tags, e.g. ai, prompts, marketing>]
    summary: <one sentence for the index>
    media: <reel dir>

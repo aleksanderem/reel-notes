@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Downloads a reel and prepares material for Claude to watch:
 # video, caption with comments, frames at scene changes, contact sheets, speech transcript.
+# Instagram carousels: every slide (photo or video) is saved in order to slides/, video slides
+# are cut into frames and transcribed too, and frames.tsv says which slide each frame came from.
 #
 # Usage: fetch.sh <url>
 # Settings (environment variables):
@@ -22,6 +24,7 @@ MEDIA_ROOT="${MEDIA_ROOT/#\~/$HOME}"
 WHISPER_MODEL="${WHISPER_MODEL/#\~/$HOME}"
 SHEET_COLS=6
 SHEET_ROWS=4
+SHEET_CELL_W=270
 
 need() { command -v "$1" >/dev/null || { echo "ERROR: missing program $1 — install: $2" >&2; exit 2; }; }
 need ffmpeg "brew install ffmpeg"
@@ -62,25 +65,35 @@ fetch_instagram() {
       author: ("@" + (.ownerUsername // "")), author_name: .ownerFullName,
       caption: (.caption // ""), published: ((.timestamp // "")[0:10]),
       duration_s: .videoDuration, type: .type, hashtags: (.hashtags // []),
+      slides: ((.childPosts // []) | length),
       likes: .likesCount, views: (.videoPlayCount // .videoViewCount),
       first_comment: .firstComment,
       comments: [(.latestComments // [])[] | {author: .ownerUsername, text: .text}]
     }' <<<"$item" > "$dir/meta.json"
 
-  local video_url
+  local video_url slide_count
   video_url=$(jq -r '.videoUrl // empty' <<<"$item")
-  if [[ -n "$video_url" ]]; then
+  slide_count=$(jq '(.childPosts // []) | length' <<<"$item")
+  if [[ -n "$video_url" && "$slide_count" == 0 ]]; then
     curl -sfL -o "$dir/video.mp4" "$video_url"
-  else
-    # Carousel or photo post: the images become the "frames".
-    mkdir -p "$dir/frames"
-    local i=0
-    jq -r '[(.images // [])[], (.childPosts // [])[].displayUrl, .displayUrl] | map(select(. != null)) | unique[]' <<<"$item" |
-      while read -r img; do
-        i=$((i + 1))
-        curl -sfL -o "$dir/frames/scene_$(printf %03d "$i").jpg" "$img"
-      done
+    return
   fi
+  # Carousel or photo post: save every slide in order as slides/NN.jpg or slides/NN.mp4.
+  # slides.tsv columns: file, kind (image|video), Instagram's alt text.
+  mkdir -p "$dir/slides"
+  jq -r '(if ((.childPosts // []) | length) > 0 then .childPosts else [.] end) | to_entries[]
+      | (.value.videoUrl // "") as $v
+      | [(.key + 1), (if $v != "" then "video" else "image" end),
+         (if $v != "" then $v else (.value.displayUrl // "") end),
+         ((.value.alt // "") | gsub("[\\t\\n]"; " "))]
+      | @tsv' <<<"$item" |
+    while IFS=$'\t' read -r n kind url alt; do
+      [[ -n "$url" ]] || continue
+      local file
+      file="$(printf %02d "$n").$([[ "$kind" == video ]] && echo mp4 || echo jpg)"
+      curl -sfL -o "$dir/slides/$file" "$url"
+      printf '%s\t%s\t%s\n' "$file" "$kind" "$alt"
+    done > "$dir/slides.tsv"
 }
 
 fetch_ytdlp() {
@@ -101,36 +114,96 @@ fetch_ytdlp() {
     }' "$tmp/video.info.json" > "$tmp/meta.json"
 }
 
-extract_frames() {
+# scene_frames <video> <out_dir>: one frame per scene change (at most every 0.4 s) and at least
+# one every MAX_GAP_S seconds, so a talking head without cuts still yields something to look at.
+# Writes out_dir/scene_NNN.jpg and prints each frame's second in the video, one per line.
+scene_frames() {
+  local video="$1" out="$2"
+  local sel="isnan(prev_selected_t)+gt(scene,${SCENE_THRESHOLD})*gte(t-prev_selected_t,0.4)+gte(t-prev_selected_t,${MAX_GAP_S})"
+  mkdir -p "$out"
+  ffmpeg -nostdin -hide_banner -nostats -y -i "$video" \
+    -vf "select='${sel}',scale=540:-2,showinfo" -fps_mode vfr "$out/scene_%03d.jpg" 2>&1 |
+    grep -o 'pts_time:[0-9.]*' | cut -d: -f2
+}
+
+# Empties the frames directory (only scene_*.jpg files are ever written there).
+reset_frames() {
   local dir="$1"
   mkdir -p "$dir/frames"
-  # One frame per scene change (at most every 0.4 s) and at least one every MAX_GAP_S seconds,
-  # so a talking head without cuts still yields something to look at.
-  local sel="isnan(prev_selected_t)+gt(scene,${SCENE_THRESHOLD})*gte(t-prev_selected_t,0.4)+gte(t-prev_selected_t,${MAX_GAP_S})"
-  ffmpeg -hide_banner -nostats -y -i "$dir/video.mp4" \
-    -vf "select='${sel}',scale=540:-2,showinfo" -fps_mode vfr "$dir/frames/scene_%03d.jpg" 2>&1 |
-    grep -o 'pts_time:[0-9.]*' | cut -d: -f2 |
-    awk '{printf "scene_%03d.jpg\t%.1f\n", NR, $1}' > "$dir/frames.tsv"
+  find "$dir/frames" -maxdepth 1 -name 'scene_*.jpg' -delete
+}
+
+# frames.tsv columns: frame file, slide number (1 for a plain reel), second in that slide's video
+# ("-" for a photo slide).
+extract_frames() {
+  local dir="$1"
+  reset_frames "$dir"
+  scene_frames "$dir/video.mp4" "$dir/frames" |
+    awk '{printf "scene_%03d.jpg\t1\t%.1f\n", NR, $1}' > "$dir/frames.tsv"
+}
+
+# All slides go into one numbered frame sequence, so the contact sheets show the carousel in order.
+extract_slide_frames() {
+  local dir="$1" n=0 file kind slide tmp t i
+  reset_frames "$dir"
+  : > "$dir/frames.tsv"
+  while IFS=$'\t' read -r -u 3 file kind _; do
+    slide=$((10#${file%%.*}))
+    if [[ "$kind" == image ]]; then
+      n=$((n + 1))
+      cp "$dir/slides/$file" "$dir/frames/$(printf scene_%03d.jpg "$n")"
+      printf 'scene_%03d.jpg\t%d\t-\n' "$n" "$slide" >> "$dir/frames.tsv"
+      continue
+    fi
+    tmp=$(mktemp -d "$dir/.frames-XXXXXX")
+    i=0
+    while read -r t; do
+      i=$((i + 1)); n=$((n + 1))
+      mv "$tmp/$(printf scene_%03d.jpg "$i")" "$dir/frames/$(printf scene_%03d.jpg "$n")"
+      printf 'scene_%03d.jpg\t%d\t%.1f\n' "$n" "$slide" "$t" >> "$dir/frames.tsv"
+    done < <(scene_frames "$dir/slides/$file" "$tmp")
+    rmdir "$tmp"
+  done 3< "$dir/slides.tsv"
 }
 
 make_sheets() {
-  local dir="$1"
-  rm -f "$dir"/sheet_*.jpg
-  ffmpeg -v error -y -pattern_type glob -i "$dir/frames/scene_*.jpg" \
-    -vf "scale=270:-2,tile=${SHEET_COLS}x${SHEET_ROWS}:padding=4:color=white" \
+  local dir="$1" first w h cell_h
+  find "$dir" -maxdepth 1 -name 'sheet_*.jpg' -delete
+  # Every cell gets the first frame's proportions; frames with other proportions are fitted
+  # inside it with white margins (carousels mix portrait, square and landscape).
+  first=$(ls "$dir"/frames/scene_*.jpg | head -1)
+  IFS=x read -r w h < <(ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0:s=x "$first")
+  cell_h=$(( (SHEET_CELL_W * h / w + 1) / 2 * 2 ))
+  ffmpeg -nostdin -v error -y -reinit_filter 0 -pattern_type glob -i "$dir/frames/scene_*.jpg" \
+    -vf "scale=${SHEET_CELL_W}:${cell_h}:force_original_aspect_ratio=decrease,pad=${SHEET_CELL_W}:${cell_h}:(ow-iw)/2:(oh-ih)/2:color=white,tile=${SHEET_COLS}x${SHEET_ROWS}:padding=4:color=white" \
     -fps_mode passthrough "$dir/sheet_%02d.jpg"
 }
 
+# transcribe <video> <out_base>: writes out_base.txt and out_base.srt.
 transcribe() {
-  local dir="$1"
-  if [[ -z "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$dir/video.mp4")" ]]; then
-    echo "(video has no audio track)" > "$dir/transcript.txt"
+  local video="$1" out="$2"
+  if [[ -z "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$video")" ]]; then
+    echo "(video has no audio track)" > "$out.txt"
     return
   fi
   need whisper-cli "brew install whisper-cpp"
   [[ -f "$WHISPER_MODEL" ]] || { echo "ERROR: whisper model not found: $WHISPER_MODEL (set REEL_NOTES_WHISPER_MODEL)" >&2; exit 2; }
-  ffmpeg -v error -y -i "$dir/video.mp4" -ar 16000 -ac 1 "$dir/audio.wav"
-  whisper-cli -m "$WHISPER_MODEL" -f "$dir/audio.wav" -l auto -otxt -osrt -of "$dir/transcript" -np >/dev/null 2>&1
+  ffmpeg -nostdin -v error -y -i "$video" -ar 16000 -ac 1 "$out.wav"
+  whisper-cli -m "$WHISPER_MODEL" -f "$out.wav" -l auto -otxt -osrt -of "$out" -np </dev/null >/dev/null 2>&1
+}
+
+# One transcript.txt for the whole carousel, with a heading per video slide;
+# per-slide timestamps are in slides/NN.srt.
+transcribe_slides() {
+  local dir="$1" file kind slide
+  : > "$dir/transcript.txt"
+  while IFS=$'\t' read -r -u 3 file kind _; do
+    [[ "$kind" == video ]] || continue
+    slide="${file%%.*}"
+    transcribe "$dir/slides/$file" "$dir/slides/$slide"
+    printf '### Slide %d (video)\n%s\n\n' "$((10#$slide))" "$(cat "$dir/slides/$slide.txt")" >> "$dir/transcript.txt"
+  done 3< "$dir/slides.tsv"
+  [[ -s "$dir/transcript.txt" ]] || echo "(no video slides — images only)" > "$dir/transcript.txt"
 }
 
 PLATFORM=$(platform_of "$URL")
@@ -157,14 +230,18 @@ else
 fi
 
 DURATION="?"
-if [[ -f "$DIR/video.mp4" ]]; then
-  [[ -f "$DIR/frames.tsv" && "$FORCE" != 1 ]] || { extract_frames "$DIR"; make_sheets "$DIR"; }
-  [[ -f "$DIR/transcript.txt" && "$FORCE" != 1 ]] || transcribe "$DIR"
-  DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$DIR/video.mp4" | cut -d. -f1)
+SLIDES="-"
+if [[ -f "$DIR/slides.tsv" ]]; then
+  [[ -f "$DIR/frames.tsv" && -f "$DIR/sheet_01.jpg" && "$FORCE" != 1 ]] || { extract_slide_frames "$DIR"; make_sheets "$DIR"; }
+  [[ -f "$DIR/transcript.txt" && "$FORCE" != 1 ]] || transcribe_slides "$DIR"
+  SLIDES="$(wc -l < "$DIR/slides.tsv" | tr -d ' ') ($(grep -c $'\tvideo\t' "$DIR/slides.tsv" || true) video; list: slides.tsv, files: slides/)"
+elif [[ ! -f "$DIR/video.mp4" ]]; then
+  echo "ERROR: $DIR was downloaded by an older version (no video.mp4, no slides.tsv) — rerun with REEL_NOTES_FORCE=1" >&2
+  exit 3
 else
-  ls "$DIR/frames" | awk '{printf "%s\t-\n", $1}' > "$DIR/frames.tsv"
-  make_sheets "$DIR"
-  echo "(post without video — images only)" > "$DIR/transcript.txt"
+  [[ -f "$DIR/frames.tsv" && -f "$DIR/sheet_01.jpg" && "$FORCE" != 1 ]] || { extract_frames "$DIR"; make_sheets "$DIR"; }
+  [[ -f "$DIR/transcript.txt" && "$FORCE" != 1 ]] || transcribe "$DIR/video.mp4" "$DIR/transcript"
+  DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$DIR/video.mp4" | cut -d. -f1) s"
 fi
 
 FRAMES=$(wc -l < "$DIR/frames.tsv" | tr -d ' ')
@@ -175,9 +252,10 @@ dir:          $DIR
 platform:     $PLATFORM
 id:           $ID
 author:       $(jq -r '.author' "$DIR/meta.json")
-duration:     ${DURATION} s
-frames:       $FRAMES (timestamps: frames.tsv)
+duration:     $DURATION
+slides:       $SLIDES
+frames:       $FRAMES (frames.tsv: frame, slide, second)
 sheets:       $SHEETS (sheet_NN.jpg, ${SHEET_COLS}x${SHEET_ROWS} frames each, row by row)
 caption:      meta.json
-speech:       transcript.txt (with timestamps: transcript.srt)
+speech:       transcript.txt (with timestamps: transcript.srt, or slides/NN.srt for carousels)
 EOF
