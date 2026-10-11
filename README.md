@@ -58,6 +58,7 @@ Set in `~/.claude/settings.json` → `"env"` (all optional):
 | `REEL_NOTES_WHISPER_MODEL` | `~/models/ggml-small.bin` | whisper.cpp model |
 | `REEL_NOTES_SCENE_THRESHOLD` | `0.08` | scene-change sensitivity |
 | `REEL_NOTES_MAX_GAP_S` | `4` | longest gap between frames, seconds |
+| `REEL_NOTES_TRACKER_URL` | — | a claude.ai artifact link; each new reel is also added to its `items` list (title, summary, points, status) so you can follow it on a phone |
 | `REEL_NOTES_FORCE` | `0` | `1` = download and process again |
 
 ## Troubleshooting

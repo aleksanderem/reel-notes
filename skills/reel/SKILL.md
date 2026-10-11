@@ -112,7 +112,19 @@ link and the note file name.
    (and pulls/pushes if there is a remote). If the push fails, the note is saved locally — say so
    and give the reason.
 
-8. **Reply** briefly: first line = what was saved and where (`$NOTES/<id>.md`), then the summary
+8. **Tracker (optional).** If `$REEL_NOTES_TRACKER_URL` is set (a claude.ai artifact link), add the reel
+   there too, so it can be followed from a phone. Use the `ArtifactData` tool (load it with ToolSearch
+   if it is deferred): `action: "set"`, `url: $REEL_NOTES_TRACKER_URL`, `collection: "items"`,
+   `doc_id: "reel-<id>"`, data:
+   `{kind: "reel", title, author, project: <project it applies to or null>, summary,
+   points: [3–5 most important points, short], steps: [{t: "<concrete action>", done: false}]
+   (only if the note has a "How to use it" section), status: "todo", remind: null, source: <url>,
+   noteUrl: <web link to the note if the notes repo has one, else null>, added: <today>,
+   updated: <ISO now>}`. If the document already exists (a redo), read it first and `update` with
+   its `version` as `if_version`, keeping its `status` and `steps` progress. If the write fails,
+   say so in the reply — the note itself is already saved.
+
+9. **Reply** briefly: first line = what was saved and where (`$NOTES/<id>.md`), then the summary
    and the 3–5 most important points. Don't paste the whole note unless asked.
 
 ## Rules
