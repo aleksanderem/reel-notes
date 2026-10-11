@@ -14,7 +14,8 @@ Where things go (environment variables, set them in Claude Code `settings.json` 
 - `REEL_NOTES_SUBDIR` — subfolder for reel notes (default `notes`)
 - `REEL_NOTES_MEDIA_DIR` — videos, frames, audio (default `~/reel-notes/media`)
 
-`$NOTES` below = `$REEL_NOTES_REPO/$REEL_NOTES_SUBDIR` (with the defaults if unset).
+`$NOTES` below = `$REEL_NOTES_REPO/$REEL_NOTES_SUBDIR` (with the defaults if unset; expand a leading `~`
+to the home directory yourself — values from `settings.json` are not shell-expanded).
 
 ## Question about saved reels (no link)
 

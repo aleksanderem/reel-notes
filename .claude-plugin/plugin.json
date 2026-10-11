@@ -1,6 +1,6 @@
 {
   "name": "reel-notes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Turn short videos (Instagram reels, TikTok, YouTube Shorts) into notes: download, read on-screen text from frames, transcribe speech, extract what matters, save a Markdown note to your notes repo.",
   "author": { "name": "aleksanderem", "url": "https://github.com/aleksanderem" },
   "repository": "https://github.com/aleksanderem/reel-notes",

@@ -17,6 +17,9 @@ WHISPER_MODEL="${REEL_NOTES_WHISPER_MODEL:-$HOME/models/ggml-small.bin}"
 SCENE_THRESHOLD="${REEL_NOTES_SCENE_THRESHOLD:-0.08}"
 MAX_GAP_S="${REEL_NOTES_MAX_GAP_S:-4}"
 FORCE="${REEL_NOTES_FORCE:-0}"
+# Paths from settings.json are not shell-expanded, so expand a leading ~ here.
+MEDIA_ROOT="${MEDIA_ROOT/#\~/$HOME}"
+WHISPER_MODEL="${WHISPER_MODEL/#\~/$HOME}"
 SHEET_COLS=6
 SHEET_ROWS=4
 
