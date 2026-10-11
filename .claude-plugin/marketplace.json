@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "reel-notes",
+  "description": "Short video → watched, transcribed, distilled into a note.",
+  "owner": { "name": "aleksanderem", "url": "https://github.com/aleksanderem" },
+  "plugins": [
+    {
+      "name": "reel-notes",
+      "description": "Analyze reels (frames + speech) and save distilled notes to a Markdown/git notes repo.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
